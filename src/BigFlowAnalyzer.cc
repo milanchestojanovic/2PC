@@ -37,8 +37,13 @@
 #include <DataFormats/VertexReco/interface/VertexFwd.h>
 #include <DataFormats/TrackReco/interface/Track.h>
 #include <DataFormats/TrackReco/interface/TrackFwd.h>
+//#include "SimDataFormats/TrackingAnalysis/interface/TrackingParticle.h"
+//#include "SimDataFormats/TrackingAnalysis/interface/TrackingParticleFwd.h"
+//#include "SimTracker/Records/interface/TrackAssociatorRecord.h"
 //#include "DataFormats/RecoCandidate/interface/TrackAssociation.h"
 
+#include "DataFormats/HeavyIonEvent/interface/CentralityBins.h"
+#include "DataFormats/HeavyIonEvent/interface/Centrality.h"
 // Particle Flow
 #include "DataFormats/ParticleFlowCandidate/interface/PFCandidate.h"
 #include "DataFormats/ParticleFlowReco/interface/PFBlock.h"
@@ -65,6 +70,7 @@ class BigFlowAnalyzer : public edm::EDAnalyzer {
       virtual void endJob() ;
       void initHistos(const edm::Service<TFileService> & fs);
       bool passesTrackCuts(const reco::Track & track, const reco::VertexCollection&);
+      bool multCuts(const reco::Track & track, const reco::VertexCollection&);
       bool caloMatched(const reco::Track & track, const edm::Event& iEvent, unsigned it );
       double deltaEta(const TVector3 a, const TVector3 b);
       double deltaPhi(const TVector3 a, const TVector3 b);
@@ -89,15 +95,16 @@ class BigFlowAnalyzer : public edm::EDAnalyzer {
 
       std::map<std::string,TH3F*> trkCorr3D_;
       TH1F * vtxZ_;
-      TH1D *histo_trigger_all;
+      TH2D *histo_trigger_all;
       TH2D *histo_mult_;
+      TH1D *histo_cent_;
 
       std::vector<TH2F*> eff2D;
-      std::vector<TH2D*> signal1;
-      std::vector<TH2D*> background1;
+      std::vector<TH3D*> signal1;
+      std::vector<TH3D*> background1;
 
-      std::vector<std::vector<TH2D*> > signal;
-      std::vector<std::vector<TH2D*> > background;
+      std::vector<std::vector<TH3D*> > signal;
+      std::vector<std::vector<TH3D*> > background;
 
        double effweight_trig = 1.0, effweight_ass=1.0;
        double fake_trig = 0.0, fake_ass=0.0;
@@ -225,7 +232,9 @@ BigFlowAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
 
    // obtain reconstructed tracks
    Handle<edm::View<reco::Track> > tcol;
+//   Handle<TrackCollection> tcol;
    iEvent.getByToken(trackSrc_, tcol);
+//   iEvent.getByLabel("generalTracks", tcol);
 
    // obtain primary vertices
    Handle<reco::VertexCollection> vertex;
@@ -233,7 +242,7 @@ BigFlowAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
   
    // sort the vertcies by number of tracks in descending order
    VertexCollection vsorted = *vertex;
-//   const VertexCollection *recoV = vertex.product();
+   const VertexCollection *recoV = vertex.product();
   
    std::sort( vsorted.begin(), vsorted.end(), BigFlowAnalyzer::vtxSort );
 
@@ -241,22 +250,22 @@ BigFlowAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
    // note if there is no centrality information multiplicity 
    // will be used in place of the centrality
    int multiplicity =0;
-   int cbin = multiplicity;
-   int occ = multiplicity;
+   int occ=10, cbin=0;
    if( useCentrality_ )
    {
      edm::Handle<int> centralityBin;
      iEvent.getByToken(centralitySrc_, centralityBin);
      cbin = *centralityBin;
      occ = cbin;
+     if ( occ < centMin_*2 || occ >= centMax_*2 ) return;
    }
-   if ( occ < centMin_*2 || occ >= centMax_*2 ) return;
-
    // skip events with no PV, this should not happen
    if( vsorted.size() == 0) return;
-   if( (int) vsorted.size() > 100 ) return;
-   if( vsorted[0].tracksSize() < 1) return;
-
+////   if( (int) vsorted.size() > 100 ) return;
+   cout <<"proba 1 "<< endl;
+//   if( vsorted[0].tracksSize() < 1) return;
+   int primaryvtx = 0;
+   cout<<"proba 2"<<endl;
    // skip events failing vertex cut
    if( applyVertexZCut_)
    {
@@ -265,8 +274,10 @@ BigFlowAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
    }
 
 
+   std::cout<<" vertex 1 "<<vsorted[0].z()<<" vertex 2 "<<(*recoV)[primaryvtx].position().z()<<std::endl;
+   std::cout<<" vertex 1 "<<vsorted[0].x()<<" vertex 2 "<<(*recoV)[primaryvtx].position().y()<<std::endl;
    vtxZ_->Fill(vsorted[0].z());
-
+   histo_cent_->Fill(occ);
    // determine event multipliticy
 /*   for(edm::View<reco::Track>::size_type i=0; i<tcol->size(); ++i){
      edm::RefToBase<reco::Track> track(tcol, i);
@@ -278,54 +289,67 @@ BigFlowAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
 
 
 
+//   cout<<"test function is "<<testFunction(trigger[0],trigger[1])<<endl;
 
-   int ntrack = 0;
-
+//eff checking
+   int ntrack = 0, nhp=0;
    for (Int_t i=0; i<ptNbins_+ptTbins_; i++) event[i].resize(0);
 
    // ---------------------
    // loop through reco tracks to remember pT, eta and phi of particles of interest 
    // ---------------------
-
+//  int i=0;
    for(edm::View<reco::Track>::size_type i=0; i<tcol->size(); ++i){ 
+//  for(TrackCollection::const_iterator tr = tcol->begin(); tr != tcol->end(); tr++) {//COUNTING MULTIPLICITY
+//     i++;
      edm::RefToBase<reco::Track> track(tcol, i);
      reco::Track* tr=const_cast<reco::Track*>(track.get());
+     if ( tr->charge() <= 0  ) continue;
+     ntrack++;
+     if(tr->quality(reco::TrackBase::qualityByName(qualityString_)) == 1)
+          nhp++;   
 
-     if ( tr->charge() == 0  ) continue;
      if ( fabs( tr->eta() ) > 2.4 ) continue; 
 
      // skip tracks that fail cuts, using vertex with most tracks as PV       
      if( ! passesTrackCuts(*tr, vsorted) ) continue;
      if( ! caloMatched(*tr, iEvent, i) ) continue;
-     multiplicity++;
+     if (tr->pt() > 0.4 && fabs(tr->eta()) <2.4 ) multiplicity++;
      double w =1.0;
-   
-     trkCorr3D_["hrec3D"]->Fill(tr->eta(), tr->pt(), occ, w);
 
      particle.SetPtEtaPhi(tr->pt(),tr->eta(),tr->phi());
+     trkCorr3D_["hraw3D"]->Fill(tr->eta(), tr->pt(), occ, w);
+     w = 1.0/getEff(particle,occ);
+     if (tr->pt() > 0.4 && tr->pt() < 2) trkCorr3D_["hcorr3D"]->Fill(tr->eta(), tr->pt(), occ, w);
+     histo_trigger_all->Fill(tr->pt(),occ, w);
 
      for (int i=0; i<ptNbins_; i++) 
        if ( tr->pt() > ptAssMin_[i] && tr->pt() < ptAssMax_[i] ) event[ptTbins_+i].push_back(particle);
     
      for (int i=0; i<ptTbins_; i++) 
        if ( tr->pt() > ptTrigMin_[i] && tr->pt() < ptTrigMax_[i] ) event[i].push_back(particle);
+   }
+
+   std::cout<<"multiplicity = "<<multiplicity<<" nhp = "<<nhp<<" ntrack = "<<ntrack<<" ratio "<<double(nhp)/double(ntrack)<<std::endl;
+   if (ntrack >= 10) {
+     if (double(nhp)/double(ntrack) <0.25 ) return;
 
    }
 
-
-
-   std::cout<<"multiplicity = "<<multiplicity<<std::endl;
    cout <<"broj triger cestica je "<<event[0].size()<<endl;
    histo_mult_->Fill(ntrack,occ);
-
+   if (!useCentrality_) {
+     occ = multiplicity;
+     if ( occ < centMin_*2 || occ >= centMax_*2 ) return;
+   }
 
    // ---------------------
    // Filling signal histograms
    // --------------------- 
 
-//   int centBin;
+   int centBin;
    int Ntrig, Nass;
-//   centBin = occ/5;
+   centBin = occ/5;
    double trigEff=1.0, assEff=1.0; double dEta, dPhi;
 
    for (int i_trigbin=0; i_trigbin<ptTbins_; i_trigbin++) {
@@ -336,27 +360,28 @@ BigFlowAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
      for (int j=0; j<Ntrig; j++) {
        trigger = event[i_trigbin][j];
        if (doEffCorr_) trigEff=getEff(trigger,occ);
-       histo_trigger_all->Fill(trigger.Pt(), (1.0)/trigEff);
-
+//       histo_trigger_all->Fill(trigger.Pt(), (1.0)/trigEff);
+//         cout<< j<<" "<<event[i_trigbin][j].Pt()<<endl;
 
        for (int i_assbin=0; i_assbin<ptNbins_; i_assbin++) {
          Nass = event[ptTbins_+i_assbin].size();
-         cout<< j<<" "<<event[i_trigbin][j].Pt()<<endl;
+//         cout<< j<<" "<<event[i_trigbin][j].Pt()<<endl;
 
 //         trigger = event[i_trigbin][j];
          for (int i=0; i<Nass; i++) {
            associated = event[ptTbins_+i_assbin][i];
 //           if (doEffCorr_) trigEff=getEff(trigger,occ);
            if (doEffCorr_) assEff=getEff(associated,occ);
+
            dEta=deltaEta(trigger,associated); dPhi=deltaPhi(trigger,associated);
-           if (dEta != 0  && dPhi != 0) signal[i_trigbin][i_assbin]->Fill(dEta,dPhi,1.0/trigEff/assEff);
+           if (dEta != 0  && dPhi != 0) signal[i_trigbin][i_assbin]->Fill(dEta,dPhi,centBin,1.0/trigEff/assEff);
            if (dEta != 0  && dPhi != 0 && doSymmetrisation_){
               dEta=deltaEta(trigger,associated); dPhi=deltaPhi(associated,trigger);
-              signal[i_trigbin][i_assbin]->Fill(dEta,dPhi,1.0/trigEff/assEff);       
+              signal[i_trigbin][i_assbin]->Fill(dEta,dPhi,centBin,1.0/trigEff/assEff);       
               dEta=deltaEta(associated,trigger); dPhi=deltaPhi(associated,trigger);
-              signal[i_trigbin][i_assbin]->Fill(dEta,dPhi,1.0/trigEff/assEff);
+              signal[i_trigbin][i_assbin]->Fill(dEta,dPhi,centBin,1.0/trigEff/assEff);
               dEta=deltaEta(associated,trigger); dPhi=deltaPhi(trigger,associated);
-              signal[i_trigbin][i_assbin]->Fill(dEta,dPhi,1.0/trigEff/assEff);
+              signal[i_trigbin][i_assbin]->Fill(dEta,dPhi,centBin,1.0/trigEff/assEff);
            } 
 
 
@@ -364,9 +389,9 @@ BigFlowAnalyzer::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup
        }
      }
    }
-   int centBin, vtxBin;
+   int vtxBin;
    vtxBin = (vsorted[0].z() +15)/2;
-   centBin = occ/5;
+   if (!useCentrality_) centBin=int (multiplicity-500)/125;   
    fullSet[15*centBin+vtxBin].push_back(event);
 }
 
@@ -400,12 +425,12 @@ BigFlowAnalyzer::passesTrackCuts(const reco::Track & track, const reco::VertexCo
        return false;
    if (nhits < 7 && chi2n > chi2nMax_pixel_ ) return false;
    if (nhits < 7 && fabs(dz/dzsigma) > dzErrMax_pixel_ ) return false;
-//   if(fabs(track.ptError()) / track.pt() > ptErrMax_) return false;
+
    if ( track.pt()<2.4 && ( nhits == 3 || nhits == 4 || nhits == 5 || nhits == 6) ) return true;
    if(fabs(dxy/dxysigma) > dxyErrMax_) return false;
    if(fabs(dz/dzsigma) > dzErrMax_) return false;
-//   if(chi2n > 12 ) return false;
-   if ( track.pt()<2.4 && ( nhits == 3 || nhits == 4 || nhits == 5 || nhits == 6) ) return true;
+
+//   if ( track.pt()<2.4 && ( nhits == 3 || nhits == 4 || nhits == 5 || nhits == 6) ) return true;
    if(fabs(track.ptError()) / track.pt() > ptErrMax_) return false;
 
    if(nhits < nhitsMin_ ) return false;
@@ -415,6 +440,37 @@ BigFlowAnalyzer::passesTrackCuts(const reco::Track & track, const reco::VertexCo
    }
    if(track.pt()>2.4 && count == 0 ) return false;
    if(chi2n > chi2nMax_ ) return false;  
+
+   return true;
+}
+
+bool
+BigFlowAnalyzer::multCuts(const reco::Track & track, const reco::VertexCollection & vertex)
+{
+   if ( ! applyTrackCuts_ ) return true;
+
+   math::XYZPoint vtxPoint(0.0,0.0,0.0);
+   double vzErr =0.0, vxErr=0.0, vyErr=0.0;
+   int primaryvtx = 0;
+   vtxPoint=vertex[primaryvtx].position();
+   vzErr=vertex[primaryvtx].zError();
+   vxErr=vertex[primaryvtx].xError();
+   vyErr=vertex[primaryvtx].yError();
+
+   double dxy=0.0, dz=0.0, dxysigma=0.0, dzsigma=0.0;
+   dxy = track.dxy(vtxPoint);
+   dz = track.dz(vtxPoint);
+   dxysigma = sqrt(track.d0Error()*track.d0Error()+vxErr*vyErr);
+   dzsigma = sqrt(track.dzError()*track.dzError()+vzErr*vzErr);
+
+
+   if(fabs(track.eta()) > 2.4) return false;
+   if(track.quality(reco::TrackBase::qualityByName(qualityString_)) != 1)
+       return false;
+   if(fabs(dxy/dxysigma) > 3.0) return false;
+   if(fabs(dz/dzsigma) > 3.0) return false;
+
+   if(fabs(track.ptError()) / track.pt() > 0.1) return false;
 
    return true;
 }
@@ -467,7 +523,7 @@ BigFlowAnalyzer::initHistos(const edm::Service<TFileService> & fs)
 
 
 
-  std::vector<std::string> hNames3D = { "hrec3D" };
+  std::vector<std::string> hNames3D = { "hraw3D", "hcorr3D" };
 
   for( auto name : hNames3D )
   {
@@ -482,14 +538,16 @@ BigFlowAnalyzer::initHistos(const edm::Service<TFileService> & fs)
 
 
   histo_mult_ = fs->make<TH2D>("mult_1" , "mult_1" , 200 , 0 , 10000, occBins_.size()-1, &occBins_[0] );
+  histo_cent_ = fs->make<TH1D>("cent" , "centraliy" , 200 , 0 , 200 );
 
 //Efficiency tables
-  eff2D.resize(centeffbins);
   TFile *table;
+  eff2D.resize(centeffbins);
 
 // /afs/cern.ch/work/m/mstojano/private/CENT_TEST/CMSSW_7_5_8_patch5/src/12010/HIN12010/crab/
   table = new TFile(effTable_.data());
-  for (int i=0; i<centeffbins;i++) eff2D[i] = (TH2F*)table->Get(Form("Eff_%d_%d",centeffmin[i],centeffmax[i]));
+  for (int i=0; i<centeffbins; i++) eff2D[i] = (TH2F*)table->Get(Form("Eff_%d_%d",centEffMin_[i],centEffMax_[i]));
+
 
 // two-particle correlations histograms
   signal.resize(ptTbins_);
@@ -499,12 +557,12 @@ BigFlowAnalyzer::initHistos(const edm::Service<TFileService> & fs)
     background[i].resize(ptNbins_);
   }      
 
-  histo_trigger_all = fs->make<TH1D>(Form("Trigger_all") , "trigger_all" , 1000 , 0 , 100 );
+  histo_trigger_all = fs->make<TH2D>(Form("Trigger_all") , "trigger_all" , 10000 , 0 , 10, occBins_.size()-1, &occBins_[0] );
 
   for (Int_t j=0; j<ptTbins_; j++ ) {
     for (Int_t i=0; i<ptNbins_; i++) {
-    signal[j][i] = fs->make<TH2D>(Form("signal_trig_%d_%d_ass_%d_%d_cent_%d_%d",int(ptTrigMin_[j]*10), int(ptTrigMax_[j]*10), int(ptAssMin_[i]*10), int(ptAssMax_[i]*10), centMin_, centMax_) , ";#Delta#eta;#Delta#phi" , 33, -4.8 - 4.8/32.0, 4.8 + 4.8/32.0,  31, -0.5*TMath::Pi()+TMath::Pi()/32, 1.5*TMath::Pi()-TMath::Pi()/32 );
-    background[j][i] = fs->make<TH2D>(Form("beckground_trig_%d_%d_ass_%d_%d_cent_%d_%d",int(ptTrigMin_[j]*10), int(ptTrigMax_[j]*10), int(ptAssMin_[i]*10), int(ptAssMax_[i]*10), centMin_, centMax_) , ";#Delta#eta;#Delta#phi" , 33, -4.8 - 4.8/32.0, 4.8 + 4.8/32.0,  31, -0.5*TMath::Pi()+TMath::Pi()/32, 1.5*TMath::Pi()-TMath::Pi()/32 );
+    signal[j][i] = fs->make<TH3D>(Form("signal_trig_%d_%d_ass_%d_%d",int(ptTrigMin_[j]*10), int(ptTrigMax_[j]*10), int(ptAssMin_[i]*10), int(ptAssMax_[i]*10) ) , ";#Delta#eta;#Delta#phi;cent" , 33, -4.8 - 4.8/32.0, 4.8 + 4.8/32.0,  31, -0.5*TMath::Pi()+TMath::Pi()/32, 1.5*TMath::Pi()-TMath::Pi()/32, 40, 0,40 );
+    background[j][i] = fs->make<TH3D>(Form("beckground_trig_%d_%d_ass_%d_%d",int(ptTrigMin_[j]*10), int(ptTrigMax_[j]*10), int(ptAssMin_[i]*10), int(ptAssMax_[i]*10)) , ";#Delta#eta;#Delta#phi;cent" , 33, -4.8 - 4.8/32.0, 4.8 + 4.8/32.0,  31, -0.5*TMath::Pi()+TMath::Pi()/32, 1.5*TMath::Pi()-TMath::Pi()/32, 40, 0, 40);
 
 
     }
@@ -548,15 +606,15 @@ BigFlowAnalyzer::getEff(const TVector3 a, int occ)
 {
 
      double eff = 1.0;
-
      for (int i_cf=0; i_cf<centEffBins_;i_cf++) if(  occ>= centEffMin_[i_cf]*2 && occ<centEffMax_[i_cf]*2 )  {
 
+
            eff = eff2D[i_cf]->GetBinContent(
-             eff2D[i_cf]->GetXaxis()->FindBin(a.Eta() ),
-             eff2D[i_cf]->GetYaxis()->FindBin(a.Pt() )
-           );
-//           std::cout<<i_cf<<" "<<tr->eta()<<" "<<tr->pt()<<" "<<eff<<std::endl;
+                    eff2D[i_cf]->GetXaxis()->FindBin(a.Eta() ),
+                    eff2D[i_cf]->GetYaxis()->FindBin(a.Pt() ) 
+                 );
      }
+//           std::cout<<i_cf<<" "<<tr->eta()<<" "<<tr->pt()<<" "<<eff<<std::endl;
      return eff;
 
 }
@@ -582,12 +640,13 @@ BigFlowAnalyzer::endJob()
    int Ntrig, Nass;
    int Nbgev, Nev;// j_bgev;
    double trigEff=1.0, assEff=1.0; double dEta, dPhi;
-   int occ, jev;
+   int occ, jev, centBin;
 
    for (int i_evtClass = 0; i_evtClass < 600; i_evtClass++) {
      Nev = fullSet[i_evtClass].size();
      Nbgev = 10;
-     occ = i_evtClass/15 + 1;
+     occ = i_evtClass/3;
+     centBin = i_evtClass/15;
      if ( Nev<11 ) Nbgev = Nev-1;
 
      for (int i_ev=0; i_ev<Nev; i_ev++) {
@@ -610,14 +669,14 @@ BigFlowAnalyzer::endJob()
                  if (doEffCorr_) trigEff=getEff(trigger,occ);
                  if (doEffCorr_) assEff=getEff(associated,occ);
                  dEta=deltaEta(trigger,associated); dPhi=deltaPhi(trigger,associated);
-                 if (dEta != 0  && dPhi != 0) background[i_trigbin][i_assbin]->Fill(dEta,dPhi,1.0/trigEff/assEff);
+                 if (dEta != 0  && dPhi != 0) background[i_trigbin][i_assbin]->Fill(dEta,dPhi,centBin,1.0/trigEff/assEff);
                  if (dEta != 0  && dPhi != 0 && doSymmetrisation_){
                    dEta=deltaEta(trigger,associated); dPhi=deltaPhi(associated,trigger);
-                   background[i_trigbin][i_assbin]->Fill(dEta,dPhi,1.0/trigEff/assEff);
+                   background[i_trigbin][i_assbin]->Fill(dEta,dPhi,centBin,1.0/trigEff/assEff);
                    dEta=deltaEta(associated,trigger); dPhi=deltaPhi(associated,trigger);
-                   background[i_trigbin][i_assbin]->Fill(dEta,dPhi,1.0/trigEff/assEff);
+                   background[i_trigbin][i_assbin]->Fill(dEta,dPhi,centBin,1.0/trigEff/assEff);
                    dEta=deltaEta(associated,trigger); dPhi=deltaPhi(trigger,associated);
-                   background[i_trigbin][i_assbin]->Fill(dEta,dPhi,1.0/trigEff/assEff);
+                   background[i_trigbin][i_assbin]->Fill(dEta,dPhi,centBin,1.0/trigEff/assEff);
                  }
                }
              }
