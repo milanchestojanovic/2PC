@@ -16,8 +16,8 @@
 <use name="DataFormats/JetReco"/>
 <use name="SimTracker/Records"/>
 <use name="SimTracker/TrackAssociation"/>
-<use name="RecoHI/HiCentralityAlgos"/>
 <use name="DataFormats/HcalRecHit"/>
+<use   name="DataFormats/PatCandidates"/>
 <use name="FWCore/Common"/>
 <use name="CLHEP"/>
 <use name="hepmc"/>
