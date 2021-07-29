@@ -44,6 +44,7 @@ BigFlow = cms.EDAnalyzer('BigFlowAnalyzer',
 
     vtxWeightParameters = cms.vdouble( 4.49636e-02, 1.36629e-01, 5.30010e+00,
                                        2.50170e-02, 4.59123e-01, 9.64888e+00 ),
+			 
     algoParameters = cms.vint32(1,2,3,4,5,6,7,8,9,10,11),
     doCaloMatched = cms.bool(True),
     reso = cms.double(2.0),
